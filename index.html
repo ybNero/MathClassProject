@@ -244,6 +244,8 @@
   .t-btn-star { flex: 1; padding: 6px; border-radius: 6px; border: 1.5px solid var(--border); background: transparent; font-size: 11px; color: var(--text2); cursor: pointer; font-family: inherit; transition: all .15s; }
   .t-btn-star:hover { border-color: var(--gold); color: var(--gold); }
   .t-btn-star.starred { background: rgba(232,160,32,.1); border-color: var(--gold); color: var(--gold); }
+  .btn-clear-all { padding: 5px 12px; border: 1.5px solid var(--red); border-radius: 6px; background: transparent; color: var(--red); font-size: 12px; cursor: pointer; transition: all .15s; font-family: inherit; }
+  .btn-clear-all:hover { background: var(--red); color: #fff; }
 
   ::-webkit-scrollbar { width: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -319,14 +321,15 @@
       <div class="panel-div"></div>
       <div class="panel-label">内角设置</div>
       <div class="angle-panel">
-        <h3>∠ 内角</h3>
-        <div id="angle-inputs"></div>
         <div class="angle-sum-box">
           <span style="font-size:12px;color:var(--text3)">内角和</span>
           <span class="angle-sum-val" id="angle-sum-val">180°</span>
         </div>
         <div class="angle-hint" id="angle-hint">五边形内角和 = 540°</div>
         <button class="btn-add" id="btn-add" onclick="addShapeToCanvas()">➕ 添加图形</button>
+        <div class="panel-div" style="margin:8px 0;"></div>
+        <h3 style="margin-bottom:6px;">∠ 各内角</h3>
+        <div id="angle-inputs"></div>
       </div>
       <div class="type-locked-tip" id="type-locked-tip">⚠️ 当前只能使用同一种图形</div>
       <div class="tiling-tip" id="tiling-tip">要求：边等长重合、无重叠、无缝隙。拼好后选择结论并提交。</div>
@@ -409,6 +412,7 @@
         <span class="stu-role-tag" style="background:#fff3e0;color:#e8a020;">教师</span>
         <span class="stu-info-name" id="t-name">教师</span>
       </div>
+      <button class="btn-clear-all" onclick="clearAllData()">🗑 清除全部数据</button>
     </div>
   </div>
   <div class="t-body">
@@ -1628,6 +1632,16 @@ function initTeacher() {
   renderTList('all');
 }
 
+function clearAllData() {
+  if (!confirm('确定要清除所有学生的提交记录吗？此操作不可恢复。')) return;
+  localStorage.removeItem('tess_submissions');
+  state.selectedSubId = null;
+  document.getElementById('t-detail-empty').style.display = '';
+  document.getElementById('t-detail-content').style.display = 'none';
+  renderTList('all');
+  showToast('已清除全部数据', 'success');
+}
+
 function injectDemos() {
   const demos=[
     {id:9001,subId:'李明-001',submitSeq:1,studentName:'李明',studentClass:'三年级一班',shape:'pentagon',shapeName:'五边形',angles:[108,108,108,108,108],tilingResult:'cannot',conclusion:'不可密铺',note:'第 1 次提交 · 2026/04/19 09:10',canvasSnapshot:'',shapesData:'[]',time:'2026/04/19 09:10',starred:false,comment:''},
@@ -1736,18 +1750,92 @@ function openTSub(id) {
 }
 
 function renderTDetail(sub) {
-  const wrap=document.querySelector('.t-canvas-wrap');
-  const dc=document.getElementById('detail-canvas');
-  dc.width=wrap.clientWidth; dc.height=wrap.clientHeight;
-  detailCtx=dc.getContext('2d');
-  const W=dc.width, H=dc.height;
-  detailCtx.fillStyle='#f4f6fb'; detailCtx.fillRect(0,0,W,H);
-  detailCtx.fillStyle='rgba(26,110,245,.04)';
-  for(let x=20;x<W;x+=20) for(let y=20;y<H;y+=20) detailCtx.fillRect(x-1,y-1,2,2);
-  if (sub.canvasSnapshot && sub.canvasSnapshot.startsWith('data:')) {
-    const img=new Image();
-    img.onload=()=>detailCtx.drawImage(img,0,0,W,H);
-    img.src=sub.canvasSnapshot;
+  const wrap = document.querySelector('.t-canvas-wrap');
+  const dc = document.getElementById('detail-canvas');
+  dc.width = wrap.clientWidth;
+  dc.height = wrap.clientHeight;
+  detailCtx = dc.getContext('2d');
+  const W = dc.width, H = dc.height;
+
+  // 背景：与学生端保持一致
+  detailCtx.fillStyle = '#ffffff';
+  detailCtx.fillRect(0, 0, W, H);
+  detailCtx.fillStyle = 'rgba(26,110,245,.04)';
+  for (let x = 28; x < W; x += 28) for (let y = 28; y < H; y += 28)
+    detailCtx.fillRect(x - 1.5, y - 1.5, 3, 3);
+
+  // 优先用 shapesData 重绘，让展示与学生端完全一致
+  let shapes = [];
+  if (sub.shapesData) {
+    try { shapes = JSON.parse(sub.shapesData); } catch {}
+  }
+
+  if (shapes.length > 0) {
+    // 计算图形包围盒，居中放置
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    shapes.forEach(sh => {
+      const cfg = SHAPES_CONFIG.find(c => c.id === sh.type);
+      if (!cfg) return;
+      const pts = (() => {
+        const lp = getLocalPts(cfg, sh);
+        const cr = Math.cos(sh.rotation * Math.PI / 180), sr = Math.sin(sh.rotation * Math.PI / 180);
+        return lp.map(p => ({ x: sh.x + p.x * cr - p.y * sr, y: sh.y + p.x * sr + p.y * cr }));
+      })();
+      pts.forEach(p => { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); });
+    });
+
+    const bW = maxX - minX, bH = maxY - minY;
+    const pad = 40;
+    const scale = Math.min((W - pad * 2) / (bW || 1), (H - pad * 2) / (bH || 1), 1.6);
+    const offX = W / 2 - (minX + bW / 2) * scale;
+    const offY = H / 2 - (minY + bH / 2) * scale;
+
+    shapes.forEach(sh => {
+      const cfg = SHAPES_CONFIG.find(c => c.id === sh.type);
+      if (!cfg || cfg.sides < 3) return;
+      const pts = getLocalPts(cfg, sh);
+
+      detailCtx.save();
+      detailCtx.translate(sh.x * scale + offX, sh.y * scale + offY);
+      detailCtx.rotate(sh.rotation * Math.PI / 180);
+      detailCtx.scale(scale, scale);
+
+      // Fill
+      detailCtx.beginPath();
+      pts.forEach((p, i) => i === 0 ? detailCtx.moveTo(p.x, p.y) : detailCtx.lineTo(p.x, p.y));
+      detailCtx.closePath();
+      detailCtx.fillStyle = cfg.color + '40';
+      detailCtx.fill();
+
+      // Edges
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        detailCtx.beginPath(); detailCtx.moveTo(a.x, a.y); detailCtx.lineTo(b.x, b.y);
+        detailCtx.strokeStyle = cfg.color; detailCtx.lineWidth = 2 / scale; detailCtx.stroke();
+      }
+
+      // Angle labels at each vertex
+      const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+      const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+      detailCtx.font = `bold ${11 / scale}px JetBrains Mono, monospace`;
+      detailCtx.textAlign = 'center'; detailCtx.textBaseline = 'middle';
+      pts.forEach((p, i) => {
+        const lx = p.x + (cx - p.x) * 0.42, ly = p.y + (cy - p.y) * 0.42;
+        const ang = (sh.angles[i] || '?') + '°';
+        const tw = detailCtx.measureText(ang).width;
+        detailCtx.fillStyle = 'rgba(255,255,255,.92)';
+        detailCtx.fillRect(lx - tw / 2 - 3, ly - 7 / scale, tw + 6, 14 / scale);
+        detailCtx.fillStyle = cfg.color;
+        detailCtx.fillText(ang, lx, ly);
+      });
+
+      detailCtx.restore();
+    });
+  } else if (sub.canvasSnapshot && sub.canvasSnapshot.startsWith('data:')) {
+    // 没有 shapesData 时降级用截图
+    const img = new Image();
+    img.onload = () => detailCtx.drawImage(img, 0, 0, W, H);
+    img.src = sub.canvasSnapshot;
   }
 }
 
