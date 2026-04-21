@@ -415,6 +415,7 @@
         <span class="stu-info-name" id="t-name">教师</span>
       </div>
       <button class="btn-clear-all" onclick="clearAllData()">🗑 清除全部数据</button>
+      <button class="btn-outline" onclick="injectDemos()" title="仅本地演示用，不写入云端">📋 导入示例数据</button>
     </div>
   </div>
   <div class="t-body">
@@ -1679,20 +1680,28 @@ async function submitWork() {
 // ═══════════════════════════════════════════
 async function initTeacher() {
   const all = await getSubmissions();
-  if (all.length === 0) await injectDemos();
   await renderTList('all');
+  // 不再自动注入示例 — 教师可点击顶部「📋 导入示例数据」手动添加
 }
 
 async function clearAllData() {
   if (!confirm('确定要清除所有学生的提交记录吗？此操作不可恢复。')) return;
   if (db) {
     try {
-      // 云数据库：逐条删除（Web SDK 不支持直接 truncate）
-      const res = await db.collection('tess_submissions').limit(200).get();
-      const ids = (res.data || []).map(d => d._id);
-      await Promise.all(ids.map(id => db.collection('tess_submissions').doc(id).remove()));
+      // 循环删除，直到云端一条不剩（防止 >200 条时漏删）
+      let deleted;
+      do {
+        const res = await db.collection('tess_submissions').limit(200).get();
+        const docs = res.data || [];
+        if (docs.length === 0) break;
+        await Promise.all(docs.map(d => db.collection('tess_submissions').doc(d._id).remove()));
+        // 确认已删空再继续
+        const verify = await db.collection('tess_submissions').limit(1).get();
+        deleted = (verify.data || []).length > 0;
+      } while (deleted);
+      console.log('[CloudBase] 云端数据已全部清除');
     } catch (e) {
-      console.warn('[CloudBase] 清除失败', e);
+      console.warn('[CloudBase] 清除云端数据失败', e);
     }
   }
   localStorage.removeItem('tess_submissions');
@@ -1703,7 +1712,11 @@ async function clearAllData() {
   showToast('已清除全部数据', 'success');
 }
 
+// ── 导入示例数据（仅写入本地，仅供演示/调试）──
 async function injectDemos() {
+  if (db) {
+    showToast('示例数据仅供本地演示，不会写入云端共享数据库', 'info');
+  }
   const demos = [
     {id:9001,subId:'李明-001',submitSeq:1,studentName:'李明',studentClass:'三年级一班',shape:'pentagon',shapeName:'五边形',angles:[108,108,108,108,108],tilingResult:'cannot',conclusion:'不可密铺',note:'第 1 次提交 · 2026/04/19 09:10',canvasSnapshot:'',shapesData:'[]',time:'2026/04/19 09:10',starred:false,comment:''},
     {id:9002,subId:'李明-002',submitSeq:2,studentName:'李明',studentClass:'三年级一班',shape:'hexagon',shapeName:'六边形',angles:[120,120,120,120,120,120],tilingResult:'can',conclusion:'可以密铺',note:'第 2 次提交 · 2026/04/19 09:18',canvasSnapshot:'',shapesData:'[]',time:'2026/04/19 09:18',starred:true,comment:'正六边形密铺，分析到位'},
@@ -1712,13 +1725,9 @@ async function injectDemos() {
     {id:9005,subId:'张伟-001',submitSeq:1,studentName:'张伟',studentClass:'三年级二班',shape:'octagon',shapeName:'八边形',angles:[135,135,135,135,135,135,135,135],tilingResult:'cannot',conclusion:'不可密铺',note:'首次提交 · 2026/04/19 09:25',canvasSnapshot:'',shapesData:'[]',time:'2026/04/19 09:25',starred:false,comment:'正八边形单种不可密铺'},
     {id:9006,subId:'刘小红-001',submitSeq:1,studentName:'刘小红',studentClass:'三年级二班',shape:'hexagon',shapeName:'六边形',angles:[120,120,120,120,120,120],tilingResult:'can',conclusion:'可以密铺',note:'首次提交 · 2026/04/19 09:30',canvasSnapshot:'',shapesData:'[]',time:'2026/04/19 09:30',starred:true,comment:'结论正确'},
   ];
-  if (db) {
-    try {
-      await Promise.all(demos.map(d => db.collection('tess_submissions').add(d)));
-      return;
-    } catch (e) { console.warn('[CloudBase] 写入演示数据失败', e); }
-  }
   localStorage.setItem('tess_submissions', JSON.stringify(demos));
+  await renderTList('all');
+  showToast('已导入示例数据（仅本地可见）', 'success');
 }
 
 // ── 读取所有提交（云优先，降级 localStorage）──
