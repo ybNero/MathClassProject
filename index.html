@@ -6,6 +6,8 @@
 <title>密铺探究 · 平面镶嵌</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+<!-- 腾讯云开发 Web SDK -->
+<script src="https://cdn.jsdelivr.net/npm/@cloudbase/js-sdk/dist/cloudbase.full.js"></script>
 <style>
   :root {
     --blue: #1a6ef5;
@@ -481,6 +483,31 @@
 
 <script>
 // ═══════════════════════════════════════════
+//  CLOUDBASE CONFIG — 请将下面两个值替换为你的环境信息
+// ═══════════════════════════════════════════
+const CB_ENV_ID = 'mathclass-d5gz220u6e7f7f85f';       // 替换为你的云开发环境 ID（如 xxx-abc123）
+const CB_REGION = 'ap-shanghai';       // 根据你创建环境时选的地域填写
+
+let db = null; // 云数据库引用
+
+async function initCloudBase() {
+  try {
+    const app = cloudbase.init({ env: CB_ENV_ID, region: CB_REGION });
+    // 匿名登录（无需微信账号，Netlify 纯 Web 场景推荐）
+    const auth = app.auth({ persistence: 'local' });
+    const loginState = await auth.getLoginState();
+    if (!loginState) {
+      await auth.anonymousAuthProvider().signIn();
+    }
+    db = app.database();
+    console.log('[CloudBase] 初始化成功');
+  } catch (e) {
+    console.warn('[CloudBase] 初始化失败，降级使用本地存储', e);
+    db = null;
+  }
+}
+
+// ═══════════════════════════════════════════
 //  CONFIG
 // ═══════════════════════════════════════════
 const SHAPES_CONFIG = [
@@ -552,6 +579,11 @@ function doLogin() {
     initStudent();
   }
 }
+
+// 页面加载后初始化 CloudBase
+document.addEventListener('DOMContentLoaded', () => {
+  initCloudBase();
+});
 
 function showTeacherFromStudent() {
   showPage('page-teacher');
@@ -1571,79 +1603,108 @@ function getSelectedVerdict() {
   return null;
 }
 
-function generateSubId(name) {
-  const all=getSubmissions();
-  const mine=all.filter(s=>s.studentName===name);
-  return `${name}-${String(mine.length+1).padStart(3,'0')}`;
+async function generateSubId(name) {
+  const all = await getSubmissions();
+  const mine = all.filter(s => s.studentName === name);
+  return `${name}-${String(mine.length + 1).padStart(3, '0')}`;
 }
 
-function submitWork() {
-  const verdict=getSelectedVerdict();
+async function submitWork() {
+  const verdict = getSelectedVerdict();
   if (!verdict) { showToast('请先选择结论', 'error'); return; }
-  if (state.shapes.length===0) { showToast('请先添加图形', 'error'); return; }
-  const cfg=SHAPES_CONFIG.find(c=>c.id===state.lockedShapeId)||SHAPES_CONFIG[0];
-  const name=state.currentUser||'匿名';
-  const cls=document.getElementById('login-class').value.trim()||'未知班级';
-  const all=getSubmissions();
-  const prev=all.filter(s=>s.studentName===name);
-  const seq=prev.length+1;
-  const timeStr=new Date().toLocaleString('zh-CN');
+  if (state.shapes.length === 0) { showToast('请先添加图形', 'error'); return; }
 
-  // Render snapshot with angles
-  const snap=document.createElement('canvas');
-  snap.width=mainCanvas.width; snap.height=mainCanvas.height;
-  const sCtx=snap.getContext('2d');
+  const btn = document.getElementById('btn-submit');
+  btn.disabled = true;
+  btn.innerHTML = '<span>⏳</span><span>提交中…</span>';
+
+  const cfg = SHAPES_CONFIG.find(c => c.id === state.lockedShapeId) || SHAPES_CONFIG[0];
+  const name = state.currentUser || '匿名';
+  const cls = document.getElementById('login-class').value.trim() || '未知班级';
+  const all = await getSubmissions();
+  const prev = all.filter(s => s.studentName === name);
+  const seq = prev.length + 1;
+  const timeStr = new Date().toLocaleString('zh-CN');
+
+  // 截图
+  const snap = document.createElement('canvas');
+  snap.width = mainCanvas.width; snap.height = mainCanvas.height;
+  const sCtx = snap.getContext('2d');
   renderAnnotatedCanvas(sCtx, snap.width, snap.height);
 
-  const sub={
-    id:Date.now(),
-    subId:generateSubId(name),
-    submitSeq:seq,
-    studentName:name,
-    studentClass:cls,
-    shape:cfg.id,
-    shapeName:cfg.name,
-    angles:[...currentAngles],
-    tilingResult:verdict,
-    conclusion:verdict==='can'?'可以密铺':'不可密铺',
-    note:seq>1?`第 ${seq} 次提交 · ${timeStr}`:`首次提交 · ${timeStr}`,
-    canvasSnapshot:snap.toDataURL(),
-    shapesData:JSON.stringify(state.shapes),
-    time:timeStr,
-    starred:false,
-    comment:''
+  const sub = {
+    id: Date.now(),
+    subId: `${name}-${String(seq).padStart(3, '0')}`,
+    submitSeq: seq,
+    studentName: name,
+    studentClass: cls,
+    shape: cfg.id,
+    shapeName: cfg.name,
+    angles: [...currentAngles],
+    tilingResult: verdict,
+    conclusion: verdict === 'can' ? '可以密铺' : '不可密铺',
+    note: seq > 1 ? `第 ${seq} 次提交 · ${timeStr}` : `首次提交 · ${timeStr}`,
+    canvasSnapshot: snap.toDataURL(),
+    shapesData: JSON.stringify(state.shapes),
+    time: timeStr,
+    starred: false,
+    comment: ''
   };
-  all.push(sub);
-  localStorage.setItem('tess_submissions', JSON.stringify(all));
 
-  const btn=document.getElementById('btn-submit');
-  btn.style.background='var(--green)';
-  btn.innerHTML='<span>✓</span><span>已提交！</span>';
-  setTimeout(()=>{btn.style.background='';btn.innerHTML='📤 提交作业';},2200);
+  // 写入云数据库（或降级 localStorage）
+  if (db) {
+    try {
+      await db.collection('tess_submissions').add(sub);
+    } catch (e) {
+      console.warn('[CloudBase] 写入失败，降级本地', e);
+      const localAll = JSON.parse(localStorage.getItem('tess_submissions') || '[]');
+      localAll.push(sub);
+      localStorage.setItem('tess_submissions', JSON.stringify(localAll));
+    }
+  } else {
+    const localAll = JSON.parse(localStorage.getItem('tess_submissions') || '[]');
+    localAll.push(sub);
+    localStorage.setItem('tess_submissions', JSON.stringify(localAll));
+  }
+
+  btn.disabled = false;
+  btn.style.background = 'var(--green)';
+  btn.innerHTML = '<span>✓</span><span>已提交！</span>';
+  setTimeout(() => { btn.style.background = ''; btn.innerHTML = '📤 提交作业'; }, 2200);
   showToast(`作业 ${sub.subId} 提交成功！`, 'success');
 }
 
 // ═══════════════════════════════════════════
 //  TEACHER
 // ═══════════════════════════════════════════
-function initTeacher() {
-  const all=getSubmissions();
-  if (all.length===0) injectDemos();
-  renderTList('all');
+async function initTeacher() {
+  const all = await getSubmissions();
+  if (all.length === 0) await injectDemos();
+  await renderTList('all');
 }
 
-function clearAllData() {
+async function clearAllData() {
   if (!confirm('确定要清除所有学生的提交记录吗？此操作不可恢复。')) return;
+  if (db) {
+    try {
+      // 云数据库：逐条删除（Web SDK 不支持直接 truncate）
+      const res = await db.collection('tess_submissions').limit(200).get();
+      const ids = (res.data || []).map(d => d._id);
+      await Promise.all(ids.map(id => db.collection('tess_submissions').doc(id).remove()));
+    } catch (e) {
+      console.warn('[CloudBase] 清除失败', e);
+    }
+  }
   localStorage.removeItem('tess_submissions');
   state.selectedSubId = null;
   document.getElementById('t-detail-empty').style.display = '';
   document.getElementById('t-detail-content').style.display = 'none';
-  renderTList('all');
+  await renderTList('all');
   showToast('已清除全部数据', 'success');
 }
 
-function injectDemos() {
-  const demos=[
+async function injectDemos() {
+  const demos = [
     {id:9001,subId:'李明-001',submitSeq:1,studentName:'李明',studentClass:'三年级一班',shape:'pentagon',shapeName:'五边形',angles:[108,108,108,108,108],tilingResult:'cannot',conclusion:'不可密铺',note:'第 1 次提交 · 2026/04/19 09:10',canvasSnapshot:'',shapesData:'[]',time:'2026/04/19 09:10',starred:false,comment:''},
     {id:9002,subId:'李明-002',submitSeq:2,studentName:'李明',studentClass:'三年级一班',shape:'hexagon',shapeName:'六边形',angles:[120,120,120,120,120,120],tilingResult:'can',conclusion:'可以密铺',note:'第 2 次提交 · 2026/04/19 09:18',canvasSnapshot:'',shapesData:'[]',time:'2026/04/19 09:18',starred:true,comment:'正六边形密铺，分析到位'},
     {id:9003,subId:'王芳-001',submitSeq:1,studentName:'王芳',studentClass:'三年级一班',shape:'octagon',shapeName:'八边形',angles:[135,135,135,135,135,135,135,135],tilingResult:'cannot',conclusion:'不可密铺',note:'第 1 次提交 · 2026/04/19 09:15',canvasSnapshot:'',shapesData:'[]',time:'2026/04/19 09:15',starred:false,comment:''},
@@ -1651,16 +1712,33 @@ function injectDemos() {
     {id:9005,subId:'张伟-001',submitSeq:1,studentName:'张伟',studentClass:'三年级二班',shape:'octagon',shapeName:'八边形',angles:[135,135,135,135,135,135,135,135],tilingResult:'cannot',conclusion:'不可密铺',note:'首次提交 · 2026/04/19 09:25',canvasSnapshot:'',shapesData:'[]',time:'2026/04/19 09:25',starred:false,comment:'正八边形单种不可密铺'},
     {id:9006,subId:'刘小红-001',submitSeq:1,studentName:'刘小红',studentClass:'三年级二班',shape:'hexagon',shapeName:'六边形',angles:[120,120,120,120,120,120],tilingResult:'can',conclusion:'可以密铺',note:'首次提交 · 2026/04/19 09:30',canvasSnapshot:'',shapesData:'[]',time:'2026/04/19 09:30',starred:true,comment:'结论正确'},
   ];
+  if (db) {
+    try {
+      await Promise.all(demos.map(d => db.collection('tess_submissions').add(d)));
+      return;
+    } catch (e) { console.warn('[CloudBase] 写入演示数据失败', e); }
+  }
   localStorage.setItem('tess_submissions', JSON.stringify(demos));
 }
 
-function getSubmissions() {
+// ── 读取所有提交（云优先，降级 localStorage）──
+async function getSubmissions() {
+  if (db) {
+    try {
+      // 云数据库单次最多取 100 条，此处取全部
+      const res = await db.collection('tess_submissions').orderBy('id','asc').limit(200).get();
+      return res.data || [];
+    } catch (e) {
+      console.warn('[CloudBase] 读取失败', e);
+    }
+  }
+  // 降级本地
   try { return JSON.parse(localStorage.getItem('tess_submissions')||'[]'); } catch { return []; }
 }
 
-function renderTList(filter) {
+async function renderTList(filter) {
   state.currentTFilter=filter;
-  let all = getSubmissions();
+  let all = await getSubmissions();
 
   // 只取每个学生最新的一次提交
   const latestMap = new Map();
@@ -1684,7 +1762,7 @@ function renderTList(filter) {
     div.className='t-item'+(sub.id===state.selectedSubId?' active':'');
     div.id=`t-item-${sub.id}`;
     // 获取该学生的提交次数
-    const allSubs = getSubmissions().filter(s=>s.studentName===sub.studentName);
+    const allSubs = all.filter(s=>s.studentName===sub.studentName);
     const totalSubs = allSubs.length;
     const isLatest = sub.submitSeq === totalSubs;
     div.innerHTML=`<div class="t-item-top">
@@ -1700,15 +1778,16 @@ function renderTList(filter) {
 function tFilter(f,btn) {
   document.querySelectorAll('.t-filter button').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
-  renderTList(f);
+  renderTList(f); // async，不需要 await
 }
 
-function openTSub(id) {
+async function openTSub(id) {
   state.selectedSubId=id;
   document.querySelectorAll('.t-item').forEach(e=>e.classList.remove('active'));
   const el=document.getElementById(`t-item-${id}`);
   if (el) el.classList.add('active');
-  const all=getSubmissions(), sub=all.find(s=>s.id===id);
+  const all = await getSubmissions();
+  const sub=all.find(s=>s.id===id);
   if (!sub) return;
   document.getElementById('t-detail-empty').style.display='none';
   const c=document.getElementById('t-detail-content');
@@ -1839,24 +1918,41 @@ function renderTDetail(sub) {
   }
 }
 
-function toggleStar() {
-  const all=getSubmissions(), sub=all.find(s=>s.id===state.selectedSubId);
+async function toggleStar() {
+  const all = await getSubmissions();
+  const sub = all.find(s => s.id === state.selectedSubId);
   if (!sub) return;
-  sub.starred=!sub.starred;
-  localStorage.setItem('tess_submissions',JSON.stringify(all));
-  const btn=document.getElementById('t-star-btn');
-  btn.classList.toggle('starred',sub.starred);
-  btn.textContent=sub.starred?'⭐ 已优秀':'⭐ 优秀';
+  sub.starred = !sub.starred;
+
+  if (db && sub._id) {
+    try {
+      await db.collection('tess_submissions').doc(sub._id).update({ starred: sub.starred });
+    } catch (e) { console.warn('[CloudBase] 更新失败', e); }
+  } else {
+    localStorage.setItem('tess_submissions', JSON.stringify(all));
+  }
+
+  const btn = document.getElementById('t-star-btn');
+  btn.classList.toggle('starred', sub.starred);
+  btn.textContent = sub.starred ? '⭐ 已优秀' : '⭐ 优秀';
   renderTList(state.currentTFilter);
-  showToast(sub.starred?'已标记为优秀':'已取消优秀标记','success');
+  showToast(sub.starred ? '已标记为优秀' : '已取消优秀标记', 'success');
 }
 
-function saveComment() {
-  const all=getSubmissions(), sub=all.find(s=>s.id===state.selectedSubId);
+async function saveComment() {
+  const all = await getSubmissions();
+  const sub = all.find(s => s.id === state.selectedSubId);
   if (!sub) return;
-  sub.comment=document.getElementById('t-comment').value.trim();
-  localStorage.setItem('tess_submissions',JSON.stringify(all));
-  showToast('点评已保存','success');
+  sub.comment = document.getElementById('t-comment').value.trim();
+
+  if (db && sub._id) {
+    try {
+      await db.collection('tess_submissions').doc(sub._id).update({ comment: sub.comment });
+    } catch (e) { console.warn('[CloudBase] 更新失败', e); }
+  } else {
+    localStorage.setItem('tess_submissions', JSON.stringify(all));
+  }
+  showToast('点评已保存', 'success');
 }
 
 // ═══════════════════════════════════════════
