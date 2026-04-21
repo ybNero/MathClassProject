@@ -6,8 +6,8 @@
 <title>密铺探究 · 平面镶嵌</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
-<!-- 腾讯云开发 Web SDK -->
-<script src="https://cdn.jsdelivr.net/npm/@cloudbase/js-sdk/dist/cloudbase.full.js"></script>
+<!-- 腾讯云开发 Web SDK v2（官方 CDN） -->
+<script src="https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js"></script>
 <style>
   :root {
     --blue: #1a6ef5;
@@ -514,18 +514,23 @@ let db = null; // 云数据库引用
 async function initCloudBase() {
   updateSyncStatus('init');
   try {
-    const app = cloudbase.init({ env: CB_ENV_ID, region: CB_REGION });
-    // 匿名登录（无需微信账号，Netlify 纯 Web 场景推荐）
-    const auth = app.auth({ persistence: 'local' });
-    const loginState = await auth.getLoginState();
-    if (!loginState) {
-      await auth.anonymousAuthProvider().signIn();
+    // 检查 SDK 是否加载成功
+    if (typeof cloudbase === 'undefined') {
+      throw new Error('CloudBase SDK 未加载，请检查网络或 CDN 是否可访问');
     }
+    // v2 SDK：正确初始化（env + region）
+    const app = cloudbase.init({ env: CB_ENV_ID, region: CB_REGION });
+    // v2 SDK：正确匿名登录 API
+    const { data, error } = await app.auth.signInAnonymously();
+    if (error) {
+      throw new Error(`匿名登录失败: ${error.message}`);
+    }
+    console.log('[CloudBase] 匿名登录成功，用户标识:', data.uid);
     db = app.database();
-    console.log('[CloudBase] 初始化成功');
+    console.log('[CloudBase] 初始化成功，db 就绪');
     updateSyncStatus('cloud');
   } catch (e) {
-    console.warn('[CloudBase] 初始化失败，降级使用本地存储', e);
+    console.error('[CloudBase] 初始化失败:', e.message || e);
     db = null;
     updateSyncStatus('local');
   }
