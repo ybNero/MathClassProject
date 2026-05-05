@@ -527,6 +527,7 @@
 const CB_ENV_ID = 'mathclass-d5gz220u6e7f7f85f';       // 替换为你的云开发环境 ID（如 xxx-abc123）
 const CB_REGION = 'ap-shanghai';       // 根据你创建环境时选的地域填写
 const PAGE_ID = 'polygon'; // 页面标识，用于在共享数据库中区分不同密铺类型的作业
+const SUBMISSION_SCOPE_KEYS = ['page', 'pageId', 'project', 'projectId'];
 
 let db = null; // 云数据库引用
 
@@ -559,6 +560,10 @@ async function ensureCloudBaseReady() {
   if (db) return db;
   await initCloudBase();
   return db;
+}
+
+function matchesCurrentSubmissionScope(doc) {
+  return SUBMISSION_SCOPE_KEYS.some(key => doc && doc[key] === PAGE_ID);
 }
 
 // ── 同步状态指示器 ──
@@ -1737,7 +1742,10 @@ async function submitWork() {
     time: timeStr,
     starred: false,
     comment: '',
-    page: PAGE_ID
+    page: PAGE_ID,
+    pageId: PAGE_ID,
+    project: PAGE_ID,
+    projectId: PAGE_ID
   };
 
   // 写入云数据库（或降级 localStorage）
@@ -1787,18 +1795,25 @@ async function clearAllData() {
 
   try {
     if (cloudDb) {
-      // 直接清空整个作业集合，避免旧数据缺少 page 字段时漏删
+      // 兼容旧数据和不同页面的字段名，避免单一 page 字段导致漏删
       let removedCount = 0;
-      while (true) {
-        const res = await cloudDb.collection('tess_submissions').limit(200).get();
-        const docs = res.data || [];
-        if (docs.length === 0) break;
-        await Promise.all(docs.map(d => d && d._id ? cloudDb.collection('tess_submissions').doc(d._id).remove() : Promise.resolve()));
-        removedCount += docs.length;
+      for (const scopeKey of SUBMISSION_SCOPE_KEYS) {
+        while (true) {
+          const res = await cloudDb.collection('tess_submissions').where({ [scopeKey]: PAGE_ID }).limit(200).get();
+          const docs = (res.data || []).filter(matchesCurrentSubmissionScope);
+          if (docs.length === 0) break;
+          await Promise.all(docs.map(d => d && d._id ? cloudDb.collection('tess_submissions').doc(d._id).remove() : Promise.resolve()));
+          removedCount += docs.length;
+        }
       }
-      const verify = await cloudDb.collection('tess_submissions').limit(1).get();
-      if ((verify.data || []).length > 0) {
-        throw new Error('云端删除后仍存在残留记录');
+
+      const remainingKeys = [];
+      for (const scopeKey of SUBMISSION_SCOPE_KEYS) {
+        const verify = await cloudDb.collection('tess_submissions').where({ [scopeKey]: PAGE_ID }).limit(1).get();
+        if ((verify.data || []).length > 0) remainingKeys.push(scopeKey);
+      }
+      if (remainingKeys.length > 0) {
+        throw new Error(`云端删除后仍存在残留记录：${remainingKeys.join(', ')}`);
       }
       console.log(`[CloudBase] 云端数据已全部清除，共删除 ${removedCount} 条`);
     }
@@ -1842,9 +1857,13 @@ async function injectDemos() {
 async function getSubmissions() {
   if (db) {
     try {
-      // 云数据库单次最多取 100 条，此处取全部（只取当前页面的数据）
+      // 云数据库优先按标准字段读取；如果旧数据用了别的字段名，再退回到全量筛选
       const res = await db.collection('tess_submissions').where({ page: PAGE_ID }).orderBy('id','asc').limit(200).get();
-      return res.data || [];
+      const scoped = (res.data || []).filter(matchesCurrentSubmissionScope);
+      if (scoped.length > 0) return scoped;
+
+      const fallback = await db.collection('tess_submissions').orderBy('id','asc').limit(200).get();
+      return (fallback.data || []).filter(matchesCurrentSubmissionScope);
     } catch (e) {
       console.warn('[CloudBase] 读取失败', e);
     }
