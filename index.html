@@ -1779,7 +1779,7 @@ async function clearAllData() {
   const originalText = btn ? btn.textContent : '';
   if (btn) {
     btn.disabled = true;
-    btn.textContent = '⏳ 清除中…';
+    btn.textContent = '⏳ 删除中…';
   }
   showToast('正在清除数据…', 'info');
   const cloudDb = await ensureCloudBaseReady();
@@ -1787,13 +1787,24 @@ async function clearAllData() {
 
   try {
     if (cloudDb) {
-      // 只清当前页面的数据，避免误删同集合里的其他内容
-      do {
+      // 先用查询删除，若 SDK/权限不支持，再回退到逐条删除
+      try {
+        await cloudDb.collection('tess_submissions').where({ page: PAGE_ID }).remove();
+      } catch (batchErr) {
+        console.warn('[CloudBase] 批量删除失败，改为逐条删除', batchErr);
         const res = await cloudDb.collection('tess_submissions').where({ page: PAGE_ID }).limit(200).get();
         const docs = res.data || [];
-        if (docs.length === 0) break;
-        await Promise.all(docs.map(d => cloudDb.collection('tess_submissions').doc(d._id).remove()));
-      } while (true);
+        await Promise.all(docs.map(d => {
+          if (d && d._id) return cloudDb.collection('tess_submissions').doc(d._id).remove();
+          if (d && d.id != null) return cloudDb.collection('tess_submissions').where({ id: d.id }).remove();
+          return Promise.resolve();
+        }));
+      }
+
+      const verify = await cloudDb.collection('tess_submissions').where({ page: PAGE_ID }).limit(1).get();
+      if ((verify.data || []).length > 0) {
+        throw new Error('云端删除后仍存在残留记录');
+      }
       console.log('[CloudBase] 云端数据已全部清除');
     }
     localStorage.removeItem('tess_submissions');
