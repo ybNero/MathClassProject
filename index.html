@@ -1775,11 +1775,18 @@ async function initTeacher() {
 
 async function clearAllData() {
   if (!confirm('确定要清除所有学生的提交记录吗？此操作不可恢复。')) return;
+  const btn = document.querySelector('.btn-clear-all');
+  const originalText = btn ? btn.textContent : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ 清除中…';
+  }
+  showToast('正在清除数据…', 'info');
   const cloudDb = await ensureCloudBaseReady();
   if (cloudDb) updateSyncStatus('syncing');
 
-  if (cloudDb) {
-    try {
+  try {
+    if (cloudDb) {
       // 只清当前页面的数据，避免误删同集合里的其他内容
       do {
         const res = await cloudDb.collection('tess_submissions').where({ page: PAGE_ID }).limit(200).get();
@@ -1788,19 +1795,23 @@ async function clearAllData() {
         await Promise.all(docs.map(d => cloudDb.collection('tess_submissions').doc(d._id).remove()));
       } while (true);
       console.log('[CloudBase] 云端数据已全部清除');
-    } catch (e) {
-      console.warn('[CloudBase] 清除云端数据失败', e);
-      showToast('云端清除失败，请检查云开发配置或权限', 'error');
-      return;
+    }
+    localStorage.removeItem('tess_submissions');
+    state.selectedSubId = null;
+    document.getElementById('t-detail-empty').style.display = '';
+    document.getElementById('t-detail-content').style.display = 'none';
+    await renderTList('all');
+    showToast('已清除全部数据', 'success');
+    if (cloudDb) updateSyncStatus('cloud');
+  } catch (e) {
+    console.warn('[CloudBase] 清除数据失败', e);
+    showToast('清除失败，请检查云开发配置或权限', 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = originalText;
     }
   }
-  localStorage.removeItem('tess_submissions');
-  state.selectedSubId = null;
-  document.getElementById('t-detail-empty').style.display = '';
-  document.getElementById('t-detail-content').style.display = 'none';
-  await renderTList('all');
-  showToast('已清除全部数据', 'success');
-  if (cloudDb) updateSyncStatus('cloud');
 }
 
 // ── 导入示例数据（仅写入本地，仅供演示/调试）──
@@ -1992,21 +2003,6 @@ function renderTDetail(sub) {
         detailCtx.beginPath(); detailCtx.moveTo(a.x, a.y); detailCtx.lineTo(b.x, b.y);
         detailCtx.strokeStyle = cfg.color; detailCtx.lineWidth = 2 / scale; detailCtx.stroke();
       }
-
-      // Angle labels at each vertex
-      const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
-      const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-      detailCtx.font = `bold ${11 / scale}px JetBrains Mono, monospace`;
-      detailCtx.textAlign = 'center'; detailCtx.textBaseline = 'middle';
-      pts.forEach((p, i) => {
-        const lx = p.x + (cx - p.x) * 0.42, ly = p.y + (cy - p.y) * 0.42;
-        const ang = (sh.angles[i] || '?') + '°';
-        const tw = detailCtx.measureText(ang).width;
-        detailCtx.fillStyle = 'rgba(255,255,255,.92)';
-        detailCtx.fillRect(lx - tw / 2 - 3, ly - 7 / scale, tw + 6, 14 / scale);
-        detailCtx.fillStyle = cfg.color;
-        detailCtx.fillText(ang, lx, ly);
-      });
 
       detailCtx.restore();
     });
