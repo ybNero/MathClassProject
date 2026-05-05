@@ -555,6 +555,12 @@ async function initCloudBase() {
   }
 }
 
+async function ensureCloudBaseReady() {
+  if (db) return db;
+  await initCloudBase();
+  return db;
+}
+
 // ── 同步状态指示器 ──
 const SYNC_CONFIG = {
   init:    { icon: '◐', text: '连接中…',    cls: 'init'    },
@@ -1769,23 +1775,23 @@ async function initTeacher() {
 
 async function clearAllData() {
   if (!confirm('确定要清除所有学生的提交记录吗？此操作不可恢复。')) return;
-  if (db) updateSyncStatus('syncing');
-  if (db) {
+  const cloudDb = await ensureCloudBaseReady();
+  if (cloudDb) updateSyncStatus('syncing');
+
+  if (cloudDb) {
     try {
-      // 循环删除，直到云端一条不剩（防止 >200 条时漏删）
-      let deleted;
+      // 只清当前页面的数据，避免误删同集合里的其他内容
       do {
-        const res = await db.collection('tess_submissions').limit(200).get();
+        const res = await cloudDb.collection('tess_submissions').where({ page: PAGE_ID }).limit(200).get();
         const docs = res.data || [];
         if (docs.length === 0) break;
-        await Promise.all(docs.map(d => db.collection('tess_submissions').doc(d._id).remove()));
-        // 确认已删空再继续
-        const verify = await db.collection('tess_submissions').limit(1).get();
-        deleted = (verify.data || []).length > 0;
-      } while (deleted);
+        await Promise.all(docs.map(d => cloudDb.collection('tess_submissions').doc(d._id).remove()));
+      } while (true);
       console.log('[CloudBase] 云端数据已全部清除');
     } catch (e) {
       console.warn('[CloudBase] 清除云端数据失败', e);
+      showToast('云端清除失败，请检查云开发配置或权限', 'error');
+      return;
     }
   }
   localStorage.removeItem('tess_submissions');
@@ -1794,7 +1800,7 @@ async function clearAllData() {
   document.getElementById('t-detail-content').style.display = 'none';
   await renderTList('all');
   showToast('已清除全部数据', 'success');
-  if (db) updateSyncStatus('cloud');
+  if (cloudDb) updateSyncStatus('cloud');
 }
 
 // ── 导入示例数据（仅写入本地，仅供演示/调试）──
