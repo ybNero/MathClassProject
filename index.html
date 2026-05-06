@@ -359,19 +359,9 @@
       <div class="panel-label">图形选择</div>
       <div class="shape-list" id="shape-list"></div>
       <div class="panel-div"></div>
-      <div class="panel-label">内角设置</div>
-      <div class="angle-panel">
-        <div class="angle-sum-box">
-          <span style="font-size:12px;color:var(--text3)">内角和</span>
-          <span class="angle-sum-val" id="angle-sum-val">180°</span>
-        </div>
-        <div class="angle-hint" id="angle-hint">五边形内角和 = 540°</div>
+      <div style="padding: 10px 12px;">
         <button class="btn-add" id="btn-add" onclick="addShapeToCanvas()">➕ 添加图形</button>
-        <div class="panel-div" style="margin:8px 0;"></div>
-        <h3 style="margin-bottom:6px;">∠ 各内角</h3>
-        <div id="angle-inputs"></div>
       </div>
-      <div class="type-locked-tip" id="type-locked-tip">⚠️ 当前只能使用同一种图形</div>
       <div class="tiling-tip" id="tiling-tip">要求：边等长重合、无重叠、无缝隙。拼好后选择结论并提交。</div>
     </div>
 
@@ -421,7 +411,6 @@
         <div class="sel-panel-title">选中图形</div>
         <div class="sel-prop"><span class="sel-k">类型</span><span class="sel-v" id="sel-type">—</span></div>
         <div class="sel-prop"><span class="sel-k">旋转</span><span class="sel-v" id="sel-rot">0°</span></div>
-        <div class="sel-prop"><span class="sel-k">内角</span><span class="sel-v" id="sel-angles">—</span></div>
         <div class="rot-fast">
           <button onclick="rotateSel(-15)">↺ -15°</button>
           <button onclick="rotateSel(15)">↻ +15°</button>
@@ -495,7 +484,6 @@
               <div class="t-row"><span class="t-row-k">编号</span><span class="t-row-v" id="t-subId">—</span></div>
               <div class="t-row"><span class="t-row-k">次序</span><span class="t-row-v" id="t-seq">—</span></div>
               <div class="t-row"><span class="t-row-k">图形</span><span class="t-row-v" id="t-shape">—</span></div>
-              <div class="t-row"><span class="t-row-k">内角</span><span class="t-row-v" id="t-angles">—</span></div>
               <div id="t-note-el"></div>
             </div>
             <div class="t-card" id="t-history-card" style="display:none;">
@@ -703,13 +691,11 @@ function initStudent() {
   state.currentShape = 0;
   currentAngles = [...SHAPES_CONFIG[0].angles];
   buildShapeList();
-  buildAngleInputs();
   // Reset UI - 学生可以直接选择结论
   document.getElementById('verdict-can').checked = false;
   document.getElementById('verdict-cannot').checked = false;
   document.getElementById('verdict-can').disabled = false; // 直接启用
   document.getElementById('btn-submit').disabled = true;
-  document.getElementById('type-locked-tip').style.display = 'none';
   document.getElementById('check-result').style.display = 'none';
   setTimeout(initCanvas, 50);
 }
@@ -746,57 +732,11 @@ function buildShapeSVG(s) {
 function selectShape(idx) {
   if (state.lockedShapeId && state.lockedShapeId !== SHAPES_CONFIG[idx].id) {
     showToast('只能使用同一种图形，已锁定', 'error');
-    document.getElementById('type-locked-tip').style.display = '';
     return;
   }
   state.currentShape = idx;
   currentAngles = [...SHAPES_CONFIG[idx].angles];
   document.querySelectorAll('.shape-btn').forEach((el, i) => el.classList.toggle('active', i===idx));
-  buildAngleInputs();
-}
-
-function buildAngleInputs() {
-  const cfg = SHAPES_CONFIG[state.currentShape];
-  const wrap = document.getElementById('angle-inputs');
-  wrap.innerHTML = '';
-  if (cfg.sides === 0) {
-    wrap.innerHTML = '<div style="font-size:11px;color:var(--text3)">圆形无内角</div>';
-    return;
-  }
-  cfg.angles.forEach((a, i) => {
-    const row = document.createElement('div');
-    row.className = 'angle-row';
-    row.innerHTML = `<div class="angle-lbl">∠${i+1}</div>
-      <input class="angle-in" type="number" min="1" max="359" value="${a}" oninput="onAngleCh(${i},this.value)">
-      <span class="angle-unit">°</span>`;
-    wrap.appendChild(row);
-    currentAngles[i] = a;
-  });
-  updateAngleSum();
-}
-
-function onAngleCh(idx, val) {
-  currentAngles[idx] = parseFloat(val) || 0;
-  updateAngleSum();
-}
-
-function updateAngleSum() {
-  const cfg = SHAPES_CONFIG[state.currentShape];
-  if (!cfg || cfg.sides === 0) return;
-  const sum = currentAngles.reduce((a,b)=>a+b,0);
-  const el = document.getElementById('angle-sum-val');
-  const hint = document.getElementById('angle-hint');
-  el.textContent = sum+'°';
-  el.className = 'angle-sum-val';
-  if (Math.abs(sum - cfg.sum) < 0.5) {
-    el.classList.add('ok');
-    hint.textContent = `✅ 正确！${cfg.name}内角和 = ${cfg.sum}°`;
-    document.getElementById('btn-add').disabled = false;
-  } else {
-    el.classList.add('err');
-    hint.textContent = `⚠ 内角和应为 ${cfg.sum}°，当前 ${sum}°`;
-    document.getElementById('btn-add').disabled = true;
-  }
 }
 
 let currentAngles = [];
@@ -805,10 +745,12 @@ let currentAngles = [];
 //  ADD SHAPE (non-overlapping)
 // ═══════════════════════════════════════════
 function addShapeToCanvas() {
+  if (!mainCanvas || !mainCtx) {
+    initCanvas();
+  }
   if (state.shapes.length === 0) {
     // First shape: no restriction
     state.lockedShapeId = SHAPES_CONFIG[state.currentShape].id;
-    document.getElementById('type-locked-tip').style.display = 'none';
   } else if (state.lockedShapeId !== SHAPES_CONFIG[state.currentShape].id) {
     showToast('只能使用同一种图形', 'error');
     return;
@@ -888,16 +830,6 @@ function drawShape(ctx, sh) {
     ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
     ctx.strokeStyle = isSnapEdge?'#fff':sel?'#ffffffcc':cfg.color; ctx.lineWidth = isSnapEdge?3:sel?2.5:1.8; ctx.stroke();
   }
-  // Angle labels
-  if (sel) {
-    const cx=pts.reduce((s,p)=>s+p.x,0)/pts.length, cy=pts.reduce((s,p)=>s+p.y,0)/pts.length;
-    ctx.font='bold 11px JetBrains Mono, monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
-    pts.forEach((p,i)=>{
-      const lx=p.x+(cx-p.x)*.42, ly=p.y+(cy-p.y)*.42;
-      ctx.fillStyle='rgba(255,255,255,.95)';
-      ctx.fillText(sh.angles[i]+'°',lx,ly);
-    });
-  }
   // Vertex handles
   if (sel||hoverBody||(hoverVInfo&&hoverVInfo.sId===sh.id)) {
     pts.forEach((p,i)=>{
@@ -930,25 +862,15 @@ function drawShape(ctx, sh) {
 }
 
 function getLocalPts(cfg, sh) {
-  const angles = sh.angles || cfg.angles;
   const n = cfg.sides;
   if (n < 3) return [];
-  // size = circumradius (顶点到中心的距离)
-  // 边长 = size * 2 * sin(π/n) = size * sin(π/n) * 2
-  // 步行方向每次旋转 2π/n（外角 = 180° - 内角）
   const R = sh.size / 2;
-  const turnAngle = 2 * Math.PI / n; // 外角 = 360°/n
-  const pts = []; let curX = 0, curY = 0; let dir = -Math.PI / 2;
+  const pts = [];
   for (let i = 0; i < n; i++) {
-    pts.push({ x: curX, y: curY });
-    curX += sh.size * Math.sin(Math.PI / n) * Math.cos(dir);
-    curY += sh.size * Math.sin(Math.PI / n) * Math.sin(dir);
-    dir += turnAngle;
+    const angle = -Math.PI / 2 + i * 2 * Math.PI / n;
+    pts.push({ x: R * Math.cos(angle), y: R * Math.sin(angle) });
   }
-  // 中心化
-  const cx = pts.reduce((s, p) => s + p.x, 0) / n;
-  const cy = pts.reduce((s, p) => s + p.y, 0) / n;
-  return pts.map(p => ({ x: p.x - cx, y: p.y - cy }));
+  return pts;
 }
 
 function getWorldPts(sh) {
@@ -1186,7 +1108,6 @@ function updateSelPanel() {
   const cfg=SHAPES_CONFIG.find(c=>c.id===sh.type);
   document.getElementById('sel-type').textContent=cfg?cfg.name:sh.type;
   document.getElementById('sel-rot').textContent=sh.rotation.toFixed(0)+'°';
-  document.getElementById('sel-angles').textContent=sh.angles.join('°, ')+'°';
 }
 
 function deleteSelected() {
@@ -1624,20 +1545,6 @@ function renderAnnotatedCanvas(ctx, W, H) {
     ctx.beginPath(); pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)); ctx.closePath();
     ctx.fillStyle = cfg.color + '33'; ctx.fill();
     ctx.strokeStyle = cfg.color; ctx.lineWidth = 2; ctx.stroke();
-
-    // Angle labels at each vertex
-    const mx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
-    const my = pts.reduce((a, p) => a + p.y, 0) / pts.length;
-    ctx.font = 'bold 11px JetBrains Mono, monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    pts.forEach((p, i) => {
-      const lx = p.x + (mx - p.x) * 0.38, ly = p.y + (my - p.y) * 0.38;
-      const ang = sh.angles[i] + '°';
-      const tw = ctx.measureText(ang).width;
-      ctx.fillStyle = 'rgba(255,255,255,.92)';
-      ctx.beginPath(); ctx.roundRect(lx - tw / 2 - 4, ly - 7, tw + 8, 14, 4); ctx.fill();
-      ctx.fillStyle = cfg.color;
-      ctx.fillText(ang, lx, ly);
-    });
     ctx.restore();
   });
 
@@ -1793,45 +1700,50 @@ async function clearAllData() {
   const cloudDb = await ensureCloudBaseReady();
   if (cloudDb) updateSyncStatus('syncing');
 
-  try {
-    if (cloudDb) {
-      // 兼容旧数据和不同页面的字段名，避免单一 page 字段导致漏删
+  // 先清除本地数据（确保本地一定能清除）
+  localStorage.removeItem('tess_submissions');
+  
+  // 然后尝试清除云端数据
+  if (cloudDb) {
+    try {
       let removedCount = 0;
       for (const scopeKey of SUBMISSION_SCOPE_KEYS) {
         while (true) {
           const res = await cloudDb.collection('tess_submissions').where({ [scopeKey]: PAGE_ID }).limit(200).get();
-          const docs = (res.data || []).filter(matchesCurrentSubmissionScope);
+          const docs = res.data || [];
           if (docs.length === 0) break;
-          await Promise.all(docs.map(d => d && d._id ? cloudDb.collection('tess_submissions').doc(d._id).remove() : Promise.resolve()));
+          const deletePromises = docs.map(d => {
+            if (d && d._id) {
+              return cloudDb.collection('tess_submissions').doc(d._id).remove()
+                .catch(err => {
+                  console.warn(`[CloudBase] 删除文档 ${d._id} 失败:`, err);
+                  return null;
+                });
+            }
+            return Promise.resolve(null);
+          });
+          await Promise.all(deletePromises);
           removedCount += docs.length;
         }
       }
+      console.log(`[CloudBase] 云端数据已清除，共处理 ${removedCount} 条`);
+    } catch (e) {
+      console.warn('[CloudBase] 云端清除数据失败:', e);
+      showToast('云端数据清除失败（可能权限不足），已清除本地数据', 'error');
+    }
+  }
 
-      const remainingKeys = [];
-      for (const scopeKey of SUBMISSION_SCOPE_KEYS) {
-        const verify = await cloudDb.collection('tess_submissions').where({ [scopeKey]: PAGE_ID }).limit(1).get();
-        if ((verify.data || []).length > 0) remainingKeys.push(scopeKey);
-      }
-      if (remainingKeys.length > 0) {
-        throw new Error(`云端删除后仍存在残留记录：${remainingKeys.join(', ')}`);
-      }
-      console.log(`[CloudBase] 云端数据已全部清除，共删除 ${removedCount} 条`);
-    }
-    localStorage.removeItem('tess_submissions');
-    state.selectedSubId = null;
-    document.getElementById('t-detail-empty').style.display = '';
-    document.getElementById('t-detail-content').style.display = 'none';
-    await renderTList('all');
-    showToast('已清除全部数据', 'success');
-    if (cloudDb) updateSyncStatus('cloud');
-  } catch (e) {
-    console.warn('[CloudBase] 清除数据失败', e);
-    showToast('清除失败，请检查云开发配置或权限', 'error');
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = originalText;
-    }
+  // 更新 UI（无论云端是否成功都执行）
+  state.selectedSubId = null;
+  document.getElementById('t-detail-empty').style.display = '';
+  document.getElementById('t-detail-content').style.display = 'none';
+  await renderTList('all');
+  showToast('已清除数据', 'success');
+  if (cloudDb) updateSyncStatus('cloud');
+
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = originalText;
   }
 }
 
@@ -1933,7 +1845,6 @@ async function openTSub(id) {
   document.getElementById('t-subId').textContent=sub.subId;
   document.getElementById('t-seq').textContent=`第 ${sub.submitSeq} 次`;
   document.getElementById('t-shape').textContent=sub.shapeName;
-  document.getElementById('t-angles').textContent=sub.angles.length>0?sub.angles.join('°,')+'°':'—';
   document.getElementById('t-note-el').innerHTML=sub.note?`<div class="t-note">${sub.note}</div>`:'';
   const isCan=sub.tilingResult==='can';
   document.getElementById('t-conclusion').innerHTML=`<span style="font-size:18px">${isCan?'✅':'❌'}</span> <span style="color:${isCan?'var(--green)':'var(--red)'}">${isCan?'可以密铺':'不可密铺'}</span>`;
