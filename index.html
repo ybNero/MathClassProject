@@ -1709,17 +1709,25 @@ async function clearAllData() {
   // 然后尝试清除云端数据
   if (cloudDb) {
     try {
+      console.log('[CloudBase] 开始清除云端数据...');
       let removedCount = 0;
       for (const scopeKey of SUBMISSION_SCOPE_KEYS) {
         while (true) {
+          console.log(`[CloudBase] 查询 ${scopeKey}=${PAGE_ID}`);
           const res = await cloudDb.collection('tess_submissions').where({ [scopeKey]: PAGE_ID }).limit(200).get();
           const docs = res.data || [];
+          console.log(`[CloudBase] 找到 ${docs.length} 条文档`);
           if (docs.length === 0) break;
           const deletePromises = docs.map(d => {
             if (d && d._id) {
+              console.log(`[CloudBase] 删除文档 _id=${d._id}`);
               return cloudDb.collection('tess_submissions').doc(d._id).remove()
+                .then(() => {
+                  console.log(`[CloudBase] 删除成功 _id=${d._id}`);
+                  return d._id;
+                })
                 .catch(err => {
-                  console.warn(`[CloudBase] 删除文档 ${d._id} 失败:`, err);
+                  console.error(`[CloudBase] 删除文档 ${d._id} 失败:`, err);
                   return null;
                 });
             }
@@ -1731,9 +1739,11 @@ async function clearAllData() {
       }
       console.log(`[CloudBase] 云端数据已清除，共处理 ${removedCount} 条`);
     } catch (e) {
-      console.warn('[CloudBase] 云端清除数据失败:', e);
-      showToast('云端数据清除失败（可能权限不足），已清除本地数据', 'error');
+      console.error('[CloudBase] 云端清除数据失败:', e);
+      showToast('云端数据清除失败：' + (e.message || e), 'error');
     }
+  } else {
+    console.log('[CloudBase] cloudDb 未初始化，跳过云端清除');
   }
 
   // 更新 UI（无论云端是否成功都执行）
