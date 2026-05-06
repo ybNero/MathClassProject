@@ -1811,6 +1811,8 @@ async function renderTList(filter) {
   });
 
   let items = Array.from(latestMap.values());
+  // 按提交时间倒序排列，最新的在最上面
+  items.sort((a, b) => new Date(b.time) - new Date(a.time));
   if (filter==='can') items=items.filter(s=>s.tilingResult==='can');
   if (filter==='cannot') items=items.filter(s=>s.tilingResult==='cannot');
   if (filter==='star') items=items.filter(s=>s.starred);
