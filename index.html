@@ -239,7 +239,7 @@
   #page-teacher { flex-direction: column; }
   .t-topbar { height: 50px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 20px; gap: 16px; flex-shrink: 0; box-shadow: var(--shadow); }
   .t-body { flex: 1; display: flex; overflow: hidden; }
-  .t-list { width: 320px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+  .t-list { width: 240px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
   .t-list-header { padding: 16px; border-bottom: 1px solid var(--border); }
   .t-list-header h2 { font-size: 15px; font-weight: 700; }
   .t-list-header p { font-size: 12px; color: var(--text2); margin-top: 2px; }
@@ -266,7 +266,7 @@
   .t-detail-body { flex: 1; display: flex; overflow: hidden; padding: 16px; gap: 16px; }
   .t-canvas-wrap { flex: 1; border-radius: var(--r); border: 1.5px solid var(--border); overflow: hidden; background: var(--bg); position: relative; min-height: 0; }
   #detail-canvas { width: 100%; height: 100%; }
-  .t-sidebar { width: 200px; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; }
+  .t-sidebar { width: 160px; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; }
   .t-card { background: var(--surface); border: 1.5px solid var(--border); border-radius: var(--r2); padding: 12px; }
   .t-card-title { font-size: 10px; font-weight: 700; color: var(--text3); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
   .t-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
@@ -613,6 +613,7 @@ let isDragging = false, isRotating = false;
 let dragOffX = 0, dragOffY = 0;
 let rotAngle0 = 0, rotShape0 = 0, rotId = null;
 let hoverVInfo = null, hoverShId = null;
+let detailHoverShId = null, detailSelectedId = null;
 
 // ═══════════════════════════════════════════
 //  LOGIN
@@ -1646,6 +1647,8 @@ async function submitWork() {
     note: seq > 1 ? `第 ${seq} 次提交 · ${timeStr}` : `首次提交 · ${timeStr}`,
     canvasSnapshot: snap.toDataURL(),
     shapesData: JSON.stringify(state.shapes),
+    canvasWidth: mainCanvas.width,
+    canvasHeight: mainCanvas.height,
     time: timeStr,
     starred: false,
     comment: '',
@@ -1877,77 +1880,186 @@ async function openTSub(id) {
 
 function renderTDetail(sub) {
   const wrap = document.querySelector('.t-canvas-wrap');
-  const dc = document.getElementById('detail-canvas');
-  dc.width = wrap.clientWidth;
-  dc.height = wrap.clientHeight;
-  detailCtx = dc.getContext('2d');
-  const W = dc.width, H = dc.height;
+  detailCanvas = document.getElementById('detail-canvas');
+  detailCanvas.width = wrap.clientWidth;
+  detailCanvas.height = wrap.clientHeight;
+  detailCtx = detailCanvas.getContext('2d');
+  bindDetailEvents(sub);
+  renderDetailCanvas(sub);
+}
 
-  // 背景：与学生端保持一致
+function renderDetailCanvas(sub) {
+  const W = detailCanvas.width, H = detailCanvas.height;
+
   detailCtx.fillStyle = '#ffffff';
   detailCtx.fillRect(0, 0, W, H);
   detailCtx.fillStyle = 'rgba(26,110,245,.04)';
   for (let x = 28; x < W; x += 28) for (let y = 28; y < H; y += 28)
     detailCtx.fillRect(x - 1.5, y - 1.5, 3, 3);
 
-  // 优先用 shapesData 重绘，让展示与学生端完全一致
   let shapes = [];
   if (sub.shapesData) {
     try { shapes = JSON.parse(sub.shapesData); } catch {}
   }
 
+  const origW = sub.canvasWidth || 800;
+  const origH = sub.canvasHeight || 600;
+  const scale = Math.min(W / origW, H / origH) * 0.9;
+  const offX = (W - origW * scale) / 2;
+  const offY = (H - origH * scale) / 2;
+
   if (shapes.length > 0) {
-    // 计算图形包围盒，居中放置
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    shapes.forEach(sh => {
-      const cfg = SHAPES_CONFIG.find(c => c.id === sh.type);
-      if (!cfg) return;
-      const pts = (() => {
-        const lp = getLocalPts(cfg, sh);
-        const cr = Math.cos(sh.rotation * Math.PI / 180), sr = Math.sin(sh.rotation * Math.PI / 180);
-        return lp.map(p => ({ x: sh.x + p.x * cr - p.y * sr, y: sh.y + p.x * sr + p.y * cr }));
-      })();
-      pts.forEach(p => { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); });
-    });
-
-    const bW = maxX - minX, bH = maxY - minY;
-    const pad = 40;
-    const scale = Math.min((W - pad * 2) / (bW || 1), (H - pad * 2) / (bH || 1), 1.6);
-    const offX = W / 2 - (minX + bW / 2) * scale;
-    const offY = H / 2 - (minY + bH / 2) * scale;
-
     shapes.forEach(sh => {
       const cfg = SHAPES_CONFIG.find(c => c.id === sh.type);
       if (!cfg || cfg.sides < 3) return;
-      const pts = getLocalPts(cfg, sh);
+      const cr = Math.cos(sh.rotation * Math.PI / 180), sr = Math.sin(sh.rotation * Math.PI / 180);
+      const lp = getLocalPts(cfg, sh);
+      const worldPts = lp.map(p => ({
+        x: (sh.x + p.x * cr - p.y * sr) * scale + offX,
+        y: (sh.y + p.x * sr + p.y * cr) * scale + offY
+      }));
 
-      detailCtx.save();
-      detailCtx.translate(sh.x * scale + offX, sh.y * scale + offY);
-      detailCtx.rotate(sh.rotation * Math.PI / 180);
-      detailCtx.scale(scale, scale);
+      const isHover = sh.id === detailHoverShId;
+      const isSelected = sh.id === detailSelectedId;
 
-      // Fill
       detailCtx.beginPath();
-      pts.forEach((p, i) => i === 0 ? detailCtx.moveTo(p.x, p.y) : detailCtx.lineTo(p.x, p.y));
+      worldPts.forEach((p, i) => i === 0 ? detailCtx.moveTo(p.x, p.y) : detailCtx.lineTo(p.x, p.y));
       detailCtx.closePath();
-      detailCtx.fillStyle = cfg.color + '40';
+      detailCtx.fillStyle = cfg.color + (isHover ? '60' : '40');
       detailCtx.fill();
+      detailCtx.strokeStyle = isSelected ? '#1a6ef5' : cfg.color;
+      detailCtx.lineWidth = isSelected ? 3 : 2;
+      detailCtx.stroke();
 
-      // Edges
-      for (let i = 0; i < pts.length; i++) {
-        const a = pts[i], b = pts[(i + 1) % pts.length];
-        detailCtx.beginPath(); detailCtx.moveTo(a.x, a.y); detailCtx.lineTo(b.x, b.y);
-        detailCtx.strokeStyle = cfg.color; detailCtx.lineWidth = 2 / scale; detailCtx.stroke();
+      if (isSelected) {
+        detailCtx.strokeStyle = 'rgba(26,110,245,.3)';
+        detailCtx.lineWidth = 1;
+        detailCtx.setLineDash([5, 5]);
+        const cx = worldPts.reduce((s, p) => s + p.x, 0) / worldPts.length;
+        const cy = worldPts.reduce((s, p) => s + p.y, 0) / worldPts.length;
+        detailCtx.beginPath();
+        detailCtx.arc(cx, cy, sh.size * scale / 2 * 0.8, 0, Math.PI * 2);
+        detailCtx.stroke();
+        detailCtx.setLineDash([]);
       }
-
-      detailCtx.restore();
     });
   } else if (sub.canvasSnapshot && sub.canvasSnapshot.startsWith('data:')) {
-    // 没有 shapesData 时降级用截图
     const img = new Image();
-    img.onload = () => detailCtx.drawImage(img, 0, 0, W, H);
+    img.onload = () => {
+      const imgRatio = img.width / img.height;
+      const canvasRatio = W / H;
+      let drawW, drawH, drawX, drawY;
+      if (imgRatio > canvasRatio) {
+        drawW = W;
+        drawH = W / imgRatio;
+        drawX = 0;
+        drawY = (H - drawH) / 2;
+      } else {
+        drawH = H;
+        drawW = H * imgRatio;
+        drawX = (W - drawW) / 2;
+        drawY = 0;
+      }
+      detailCtx.drawImage(img, drawX, drawY, drawW, drawH);
+    };
     img.src = sub.canvasSnapshot;
   }
+}
+
+function bindDetailEvents(sub) {
+  detailCanvas.onmousemove = (e) => {
+    const rect = detailCanvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    let shapes = [];
+    if (sub.shapesData) {
+      try { shapes = JSON.parse(sub.shapesData); } catch {}
+    }
+
+    const origW = sub.canvasWidth || 800;
+    const origH = sub.canvasHeight || 600;
+    const scale = Math.min(detailCanvas.width / origW, detailCanvas.height / origH) * 0.9;
+    const offX = (detailCanvas.width - origW * scale) / 2;
+    const offY = (detailCanvas.height - origH * scale) / 2;
+
+    let found = null;
+    for (let i = shapes.length - 1; i >= 0; i--) {
+      const sh = shapes[i];
+      const cfg = SHAPES_CONFIG.find(c => c.id === sh.type);
+      if (!cfg || cfg.sides < 3) continue;
+      const cr = Math.cos(sh.rotation * Math.PI / 180), sr = Math.sin(sh.rotation * Math.PI / 180);
+      const lp = getLocalPts(cfg, sh);
+      const worldPts = lp.map(p => ({
+        x: (sh.x + p.x * cr - p.y * sr) * scale + offX,
+        y: (sh.y + p.x * sr + p.y * cr) * scale + offY
+      }));
+
+      if (hitTest(x, y, worldPts)) {
+        found = sh.id;
+        break;
+      }
+    }
+
+    if (detailHoverShId !== found) {
+      detailHoverShId = found;
+      renderDetailCanvas(sub);
+      detailCanvas.style.cursor = found ? 'pointer' : 'default';
+    }
+  };
+
+  detailCanvas.onclick = (e) => {
+    const rect = detailCanvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    let shapes = [];
+    if (sub.shapesData) {
+      try { shapes = JSON.parse(sub.shapesData); } catch {}
+    }
+
+    const origW = sub.canvasWidth || 800;
+    const origH = sub.canvasHeight || 600;
+    const scale = Math.min(detailCanvas.width / origW, detailCanvas.height / origH) * 0.9;
+    const offX = (detailCanvas.width - origW * scale) / 2;
+    const offY = (detailCanvas.height - origH * scale) / 2;
+
+    let found = null;
+    for (let i = shapes.length - 1; i >= 0; i--) {
+      const sh = shapes[i];
+      const cfg = SHAPES_CONFIG.find(c => c.id === sh.type);
+      if (!cfg || cfg.sides < 3) continue;
+      const cr = Math.cos(sh.rotation * Math.PI / 180), sr = Math.sin(sh.rotation * Math.PI / 180);
+      const lp = getLocalPts(cfg, sh);
+      const worldPts = lp.map(p => ({
+        x: (sh.x + p.x * cr - p.y * sr) * scale + offX,
+        y: (sh.y + p.x * sr + p.y * cr) * scale + offY
+      }));
+
+      if (hitTest(x, y, worldPts)) {
+        found = sh.id;
+        break;
+      }
+    }
+
+    detailSelectedId = found;
+    renderDetailCanvas(sub);
+  };
+
+  detailCanvas.onmouseleave = () => {
+    detailHoverShId = null;
+    renderDetailCanvas(sub);
+  };
+}
+
+function hitTest(x, y, pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi))
+      inside = !inside;
+  }
+  return inside;
 }
 
 async function toggleStar() {
